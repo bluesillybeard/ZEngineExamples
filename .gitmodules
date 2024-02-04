@@ -1,3 +1,6 @@
 [submodule "ZEngine"]
 	path = ZEngine
 	url = https://github.com/bluesillybeard/ZEngine
+[submodule "ZRender"]
+	path = ZRender
+	url = https://github.com/bluesillybeard/ZRender
