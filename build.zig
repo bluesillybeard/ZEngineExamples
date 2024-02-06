@@ -23,7 +23,7 @@ pub fn build(b: *std.Build) !void {
     });
     exe.root_module.addImport("ecs", ecsModule);
     exe.root_module.addImport("zengine", zengineModule);
-    try zrender.link("ZRender", exe, zengineModule);
+    try zrender.link("ZRender", exe, zengineModule, ecsModule);
     b.installArtifact(exe);
     const run = b.addRunArtifact(exe);
     const runStep = b.step("run", "run the example");
