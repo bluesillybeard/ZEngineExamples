@@ -4,3 +4,6 @@
 [submodule "ZRender"]
 	path = ZRender
 	url = https://github.com/bluesillybeard/ZRender
+[submodule "zlm"]
+	path = zlm
+	url = https://github.com/ziglibs/zlm.git

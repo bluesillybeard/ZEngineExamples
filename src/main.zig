@@ -36,13 +36,19 @@ pub const ExampleSystem = extern struct {
         const entity = registries.globalEcsRegistry.create();
         registries.globalEcsRegistry.add(entity, zrender.RenderComponent{
             .mesh = try renderSystem.loadMesh(&[_]zrender.Vertex{
-                .{.x = -1, .y = -1, .z = 0.5, .texX = 0, .texY = 0, .color = 0xFFFFFF00, .blend = 1},
-                .{.x =  1, .y = -1, .z = 0.5, .texX = 1, .texY = 0, .color = 0xFF00FFFF, .blend = 1},
-                .{.x = -1, .y =  1, .z = 0.5, .texX = 0, .texY = 1, .color = 0xFFFF00FF, .blend = 0},
-            }, &[_]u16{0, 1, 2}),
+                .{.x = -1, .y = -1, .z = 0.5, .texX = 0, .texY = 1, .color = 0xFFFF0000, .blend = 0},
+                .{.x = -1, .y =  1, .z = 0.5, .texX = 0, .texY = 0, .color = 0xFFFF0000, .blend = 0},
+                .{.x =  1, .y = -1, .z = 0.5, .texX = 1, .texY = 1, .color = 0xFFFF0000, .blend = 0},
+                .{.x =  1, .y =  1, .z = 0.5, .texX = 1, .texY = 0, .color = 0xFFFF0000, .blend = 0},
+            }, &[_]u16{0, 1, 2, 1, 3, 2}),
             .texture = try renderSystem.loadTexture(@embedFile("parrot.png")),
             .transform = zrender.Mat4.identity,
         });
+        renderSystem.onUpdate.sink().connect(&update);
+    }
+
+    fn update(args: zrender.OnUpdateEventArgs) void {
+        _ = args;
     }
 
     pub fn systemDeinitGlobal(this: *@This(), registries: *zengine.RegistrySet) void {
