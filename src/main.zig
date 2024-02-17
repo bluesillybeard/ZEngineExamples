@@ -52,6 +52,14 @@ pub const ExampleSystem = extern struct {
         });
         registries.globalEcsRegistry.add(entity, ExampleComponent{.rotation = 0});
         renderSystem.onUpdate.sink().connect(&update);
+        renderSystem.onType.sink().connect(&onType);
+    }
+
+    fn onType(args: zrender.OnTypeEventArgs) void {
+        var buffer = [5]u8{0, 0, 0, 0, 0};
+        // TODO: make sure the character fits in a u21
+        _ = std.unicode.utf8Encode(@intCast(args.character), &buffer) catch std.debug.print("Warn: Invalid unicode point: {}", .{args.character});
+        std.debug.print("Typed, {s}\n", .{buffer});
     }
 
     fn update(args: zrender.OnUpdateEventArgs) void {
