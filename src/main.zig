@@ -53,6 +53,11 @@ pub const ExampleSystem = extern struct {
         registries.globalEcsRegistry.add(entity, ExampleComponent{.rotation = 0});
         renderSystem.onUpdate.sink().connect(&update);
         renderSystem.onType.sink().connect(&onType);
+        renderSystem.onKeyDown.sink().connect(&onKeyDown);
+    }
+
+    fn onKeyDown(args: zrender.OnKeyDownEventArgs) void {
+        std.debug.print("Key {} down\n", .{args.key});
     }
 
     fn onType(args: zrender.OnTypeEventArgs) void {
