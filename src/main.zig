@@ -42,14 +42,16 @@ pub const ExampleSystem = struct {
         _ = this;
         var renderSystem = registries.globalRegistry.getRegister(zrender.ZRenderSystem).?;
         const entity = registries.globalEcsRegistry.create();
+        const pipeline = try renderSystem.createPipeline(@embedFile("shaderBin/shader.vert"), @embedFile("shaderBin/shader.frag"));
         registries.globalEcsRegistry.add(entity, zrender.RenderComponent{
             .mesh = try renderSystem.loadMesh(&[_]zrender.Vertex{
                 .{ .x = -1, .y = -1, .z = 0, .texX = 0, .texY = 1, .color = 0xFFFF0000, .blend = 0 },
                 .{ .x = -1, .y = 1, .z = 0, .texX = 0, .texY = 0, .color = 0xFFFF0000, .blend = 0 },
                 .{ .x = 1, .y = -1, .z = 0, .texX = 1, .texY = 1, .color = 0xFFFF0000, .blend = 0 },
                 .{ .x = 1, .y = 1, .z = 0, .texX = 1, .texY = 0, .color = 0xFFFF0000, .blend = 0 },
-            }, &[_]u16{ 0, 1, 2, 1, 3, 2 }),
+            }, &[_]u16{ 0, 1, 2, 1, 3, 2 }, pipeline),
             .texture = try renderSystem.loadTexture(@embedFile("parrot.png")),
+            .pipeline = pipeline,
             .transform = zrender.Mat4.identity,
         });
         registries.globalEcsRegistry.add(entity, ExampleComponent{ .rotation = 0, .lastRotation = 0 });
