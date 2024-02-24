@@ -18,13 +18,13 @@ pub fn main() !void {
     zrenderSystem.run();
 }
 
-pub const ExampleComponent = extern struct {
+pub const ExampleComponent = struct {
     rotation: f32,
     // rotation in the previous update
     lastRotation: f32,
 };
 
-pub const ExampleSystem = extern struct {
+pub const ExampleSystem = struct {
     pub const name: []const u8 = "example";
     pub const components = [_]type{ExampleComponent};
     pub fn comptimeVerification(comptime options: zengine.ZEngineComptimeOptions) bool {
@@ -35,7 +35,7 @@ pub const ExampleSystem = extern struct {
     pub fn init(staticAllocator: std.mem.Allocator, heapAllocator: std.mem.Allocator) @This() {
         _ = heapAllocator;
         _ = staticAllocator;
-        return .{ .cameraRotation = 0, .lastCameraRotation = 0 };
+        return .{ .cameraRotation = 0, .lastCameraRotation = 0, .rand = std.rand.DefaultPrng.init(@bitCast(std.time.microTimestamp())) };
     }
 
     pub fn systemInitGlobal(this: *@This(), registries: *zengine.RegistrySet) !void {
@@ -58,6 +58,7 @@ pub const ExampleSystem = extern struct {
         renderSystem.onType.sink().connect(&onType);
         renderSystem.onKeyDown.sink().connect(&onKeyDown);
         renderSystem.onKeyUp.sink().connect(&onKeyUp);
+        renderSystem.onMousePress.sink().connect(&onClick);
     }
 
     fn onKeyDown(args: zrender.OnKeyDownEventArgs) void {
@@ -76,8 +77,46 @@ pub const ExampleSystem = extern struct {
         std.debug.print("Typed, {s}\n", .{buffer});
     }
 
+    fn onClick(args: zrender.OnMousePressEventArgs) void {
+        std.debug.print("click {}\n", .{args.button});
+        var ecs = args.registries.globalEcsRegistry;
+        const renderSystem = args.registries.globalRegistry.getRegister(zrender.ZRenderSystem).?;
+        const this = args.registries.globalRegistry.getRegister(ExampleSystem).?;
+        var view = ecs.view(.{ ExampleComponent, zrender.RenderComponent }, .{});
+        var iter = view.entityIterator();
+        while (iter.next()) |entity| {
+            // grab the mesh of the entity ahead of time
+            const mesh = view.get(zrender.RenderComponent, entity).mesh;
+            const random = this.rand.random();
+            switch (args.button) {
+                0 => {
+                    // randomize vertices
+                    const vertices = renderSystem.mapMeshVertices(mesh, 0, mesh.numVertices);
+                    for (vertices) |*vertex| {
+                        vertex.x = random.float(f32);
+                        vertex.y = random.float(f32);
+                        vertex.z = random.float(f32);
+                    }
+                    renderSystem.unmapMeshVertices(mesh, vertices);
+                },
+                1 => {
+                    // shuffle indices
+                    const indices = renderSystem.mapMeshIndices(mesh, 0, mesh.numIndices);
+                    for (0..indices.len) |i| {
+                        //swap this index with a random one
+                        const ii = random.intRangeLessThan(usize, 0, indices.len);
+                        const temp = indices[i];
+                        indices[i] = indices[ii];
+                        indices[ii] = temp;
+                    }
+                    renderSystem.unmapMeshIndices(mesh, indices);
+                },
+                else => {},
+            }
+        }
+    }
+
     fn update(args: zrender.OnUpdateEventArgs) void {
-        // TODO: incorperate delta into calculations
         var ecs = args.registries.globalEcsRegistry;
         var this = args.registries.globalRegistry.getRegister(ExampleSystem).?;
         const deltaSeconds = @as(f32, @floatFromInt(args.delta)) / std.time.us_per_s;
@@ -99,9 +138,8 @@ pub const ExampleSystem = extern struct {
         var view = ecs.view(.{ ExampleComponent, zrender.RenderComponent }, .{});
         var iter = view.entityIterator();
         // From 0 to 1 (and often >1), how far into the current update are we?
-        // 0 -> time == updateTime
-        // 1 -> time == updateTime + updateDelta
-        // g
+        // Holy macaroni, casting with floats in Zig is an absolute nightmare.
+        // I really wish @floatFromInt and @intFromFloat took the type as an optional parameter instead having to slap '@as' everywhere
         const t = @as(f32, @floatFromInt(args.time - renderSystem.updateTime)) / @as(f32, @floatFromInt(renderSystem.updateDelta));
         while (iter.next()) |entity| {
             // TODO: lots of optimization potential here
@@ -181,4 +219,5 @@ pub const ExampleSystem = extern struct {
     cameraRotation: f32,
     // camera rotation in the last update
     lastCameraRotation: f32,
+    rand: std.rand.DefaultPrng,
 };
