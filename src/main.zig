@@ -3,6 +3,23 @@ const zengine = @import("zengine");
 const zrender = @import("zrender");
 const zlm = @import("zlm");
 
+pub const Vertex = extern struct {
+    pub const attributes = [_]zrender.NamedVertexAttribute{
+        .{ .name = "pos", .type = .f32x3 },
+        .{ .name = "texCoord", .type = .f32x2 },
+        .{ .name = "color", .type = .u8x4normalized },
+        .{ .name = "blend", .type = .f32 },
+    };
+    x: f32,
+    y: f32,
+    z: f32,
+    texX: f32,
+    texY: f32,
+    color: u32,
+    /// 0 -> texture, 1 -> color
+    blend: f32,
+};
+
 pub fn main() !void {
     var allocatorObj = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = allocatorObj.deinit();
@@ -42,9 +59,9 @@ pub const ExampleSystem = struct {
         _ = this;
         var renderSystem = registries.globalRegistry.getRegister(zrender.ZRenderSystem).?;
         const entity = registries.globalEcsRegistry.create();
-        const pipeline = try renderSystem.createPipeline(@embedFile("shaderBin/shader.vert"), @embedFile("shaderBin/shader.frag"));
+        const pipeline = try renderSystem.createPipeline(@embedFile("shaderBin/shader.vert"), @embedFile("shaderBin/shader.frag"), .{ .attributes = &Vertex.attributes });
         registries.globalEcsRegistry.add(entity, zrender.RenderComponent{
-            .mesh = try renderSystem.loadMesh(&[_]zrender.Vertex{
+            .mesh = try renderSystem.loadMesh(Vertex, &[_]Vertex{
                 .{ .x = -1, .y = -1, .z = 0, .texX = 0, .texY = 1, .color = 0xFFFF0000, .blend = 0 },
                 .{ .x = -1, .y = 1, .z = 0, .texX = 0, .texY = 0, .color = 0xFFFF0000, .blend = 0 },
                 .{ .x = 1, .y = -1, .z = 0, .texX = 1, .texY = 1, .color = 0xFFFF0000, .blend = 0 },
@@ -93,13 +110,13 @@ pub const ExampleSystem = struct {
             switch (args.button) {
                 0 => {
                     // randomize vertices
-                    const vertices = renderSystem.mapMeshVertices(mesh, 0, mesh.numVertices);
+                    const vertices = renderSystem.mapMeshVertices(Vertex, mesh, 0, mesh.numVertices);
                     for (vertices) |*vertex| {
                         vertex.x = random.float(f32);
                         vertex.y = random.float(f32);
                         vertex.z = random.float(f32);
                     }
-                    renderSystem.unmapMeshVertices(mesh, vertices);
+                    renderSystem.unmapMeshVertices(Vertex, mesh, vertices);
                 },
                 1 => {
                     // shuffle indices
