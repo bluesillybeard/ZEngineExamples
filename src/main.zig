@@ -4,7 +4,7 @@ const zrender = @import("zrender");
 const zlm = @import("zlm");
 
 pub const Vertex = extern struct {
-    pub const attributes = [_]zrender.NamedVertexAttribute{
+    pub const attributes = [_]zrender.NamedAttribute{
         .{ .name = "pos", .type = .f32x3 },
         .{ .name = "texCoord", .type = .f32x2 },
         .{ .name = "color", .type = .u8x4normalized },
@@ -50,28 +50,30 @@ pub const ExampleSystem = struct {
     }
 
     pub fn init(staticAllocator: std.mem.Allocator, heapAllocator: std.mem.Allocator) @This() {
-        _ = heapAllocator;
         _ = staticAllocator;
-        return .{ .cameraRotation = 0, .lastCameraRotation = 0, .rand = std.rand.DefaultPrng.init(@bitCast(std.time.microTimestamp())) };
+        return .{ .cameraRotation = 0, .lastCameraRotation = 0, .rand = std.rand.DefaultPrng.init(@bitCast(std.time.microTimestamp())), .allocator = heapAllocator };
     }
 
     pub fn systemInitGlobal(this: *@This(), registries: *zengine.RegistrySet) !void {
-        _ = this;
+        const ecs = &registries.globalEcsRegistry;
         var renderSystem = registries.globalRegistry.getRegister(zrender.ZRenderSystem).?;
-        const entity = registries.globalEcsRegistry.create();
-        const pipeline = try renderSystem.createPipeline(@embedFile("shaderBin/shader.vert"), @embedFile("shaderBin/shader.frag"), .{ .attributes = &Vertex.attributes });
-        registries.globalEcsRegistry.add(entity, zrender.RenderComponent{
-            .mesh = try renderSystem.loadMesh(Vertex, &[_]Vertex{
-                .{ .x = -1, .y = -1, .z = 0, .texX = 0, .texY = 1, .color = 0xFFFF0000, .blend = 0 },
-                .{ .x = -1, .y = 1, .z = 0, .texX = 0, .texY = 0, .color = 0xFFFF0000, .blend = 0 },
-                .{ .x = 1, .y = -1, .z = 0, .texX = 1, .texY = 1, .color = 0xFFFF0000, .blend = 0 },
-                .{ .x = 1, .y = 1, .z = 0, .texX = 1, .texY = 0, .color = 0xFFFF0000, .blend = 0 },
-            }, &[_]u16{ 0, 1, 2, 1, 3, 2 }, pipeline),
-            .texture = try renderSystem.loadTexture(@embedFile("parrot.png")),
-            .pipeline = pipeline,
-            .transform = zrender.Mat4.identity,
-        });
-        registries.globalEcsRegistry.add(entity, ExampleComponent{ .rotation = 0, .lastRotation = 0 });
+        const entity = ecs.create();
+        const pipeline = try renderSystem.createPipeline(@embedFile("shaderBin/shader.vert"), @embedFile("shaderBin/shader.frag"), .{ .attributes = &Vertex.attributes, .uniforms = &[_]zrender.NamedUniformTag{
+            .{ .name = "tex", .tag = .texture },
+            .{ .name = "transform", .tag = .mat4 },
+        } });
+        // The uniforms unfortunately have to be allocated on the heap.
+        // It's a single allocation that lasts the duration of this object, so I am not concerned in the slightest.
+        const uniforms = try this.allocator.alloc(zrender.Uniform, 2);
+        uniforms[0] = .{ .texture = try renderSystem.loadTexture(@embedFile("parrot.png")) };
+        uniforms[1] = .{ .mat4 = zrender.Mat4.identity };
+        ecs.add(entity, zrender.RenderComponent{ .mesh = try renderSystem.loadMesh(Vertex, &[_]Vertex{
+            .{ .x = -1, .y = -1, .z = 0, .texX = 0, .texY = 1, .color = 0xFFFF0000, .blend = 0 },
+            .{ .x = -1, .y = 1, .z = 0, .texX = 0, .texY = 0, .color = 0xFFFF0000, .blend = 0 },
+            .{ .x = 1, .y = -1, .z = 0, .texX = 1, .texY = 1, .color = 0xFFFF0000, .blend = 0 },
+            .{ .x = 1, .y = 1, .z = 0, .texX = 1, .texY = 0, .color = 0xFFFF0000, .blend = 0 },
+        }, &[_]u16{ 0, 1, 2, 1, 3, 2 }, pipeline), .pipeline = pipeline, .uniforms = uniforms });
+        ecs.add(entity, ExampleComponent{ .rotation = 0, .lastRotation = 0 });
         renderSystem.onUpdate.sink().connect(&update);
         renderSystem.onFrame.sink().connect(&frame);
         renderSystem.onType.sink().connect(&onType);
@@ -98,7 +100,7 @@ pub const ExampleSystem = struct {
 
     fn onClick(args: zrender.OnMousePressEventArgs) void {
         std.debug.print("click {}\n", .{args.button});
-        var ecs = args.registries.globalEcsRegistry;
+        const ecs = &args.registries.globalEcsRegistry;
         const renderSystem = args.registries.globalRegistry.getRegister(zrender.ZRenderSystem).?;
         const this = args.registries.globalRegistry.getRegister(ExampleSystem).?;
         var view = ecs.view(.{ ExampleComponent, zrender.RenderComponent }, .{});
@@ -136,7 +138,7 @@ pub const ExampleSystem = struct {
     }
 
     fn update(args: zrender.OnUpdateEventArgs) void {
-        var ecs = args.registries.globalEcsRegistry;
+        const ecs = &args.registries.globalEcsRegistry;
         var this = args.registries.globalRegistry.getRegister(ExampleSystem).?;
         const deltaSeconds = @as(f32, @floatFromInt(args.delta)) / std.time.us_per_s;
         this.lastCameraRotation = this.cameraRotation;
@@ -151,7 +153,7 @@ pub const ExampleSystem = struct {
     }
 
     fn frame(args: zrender.OnFrameEventArgs) void {
-        var ecs = args.registries.globalEcsRegistry;
+        const ecs = &args.registries.globalEcsRegistry;
         const this = args.registries.globalRegistry.getRegister(ExampleSystem).?;
         const renderSystem = args.registries.globalRegistry.getRegister(zrender.ZRenderSystem).?;
         var view = ecs.view(.{ ExampleComponent, zrender.RenderComponent }, .{});
@@ -176,13 +178,18 @@ pub const ExampleSystem = struct {
             lastTransform = lastTransform.mul(zlm.Mat4.createLookAt(zlm.Vec3{ .x = @cos(this.lastCameraRotation) * 5, .y = 0, .z = @sin(this.lastCameraRotation) * 5 }, zlm.Vec3.zero, zlm.Vec3.unitY));
             lastTransform = lastTransform.mul(zlm.Mat4.createPerspective(zlm.toRadians(80.0), 1, 0.0001, 10000));
 
-            renderComponent.transform = zlmToZrenderMat4(matrixLerp(lastTransform, transform, t));
+            renderComponent.uniforms[1].mat4 = zlmToZrenderMat4(matrixLerp(lastTransform, transform, t));
         }
     }
 
     pub fn systemDeinitGlobal(this: *@This(), registries: *zengine.RegistrySet) void {
-        _ = this;
-        _ = registries;
+        const ecs = &registries.globalEcsRegistry;
+        var view = ecs.view(.{ ExampleComponent, zrender.RenderComponent }, .{});
+        var iterator = view.entityIterator();
+        while (iterator.next()) |entity| {
+            const renderComponent = view.get(zrender.RenderComponent, entity);
+            this.allocator.free(renderComponent.uniforms);
+        }
     }
 
     pub fn deinit(this: *@This()) void {
@@ -239,4 +246,5 @@ pub const ExampleSystem = struct {
     // camera rotation in the last update
     lastCameraRotation: f32,
     rand: std.rand.DefaultPrng,
+    allocator: std.mem.Allocator,
 };
