@@ -1,5 +1,6 @@
 const std = @import("std");
 const zrender = @import("ZRender/build.zig");
+const box2d = @import("Box2D.zig/build.zig");
 
 pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
@@ -34,6 +35,7 @@ pub fn build(b: *std.Build) !void {
         .{ .sourcePath = "src/shaders/shader.vert.glsl", .destPath = "src/shaderBin/shader.vert" },
     }, .target = target, .optimize = optimize });
     exe.root_module.addImport("zrender", &zrenderLib.root_module);
+    try box2d.link("Box2D.zig/box2c/", exe, .{});
     b.installArtifact(exe);
     const run = b.addRunArtifact(exe);
     const runStep = b.step("run", "run the example");

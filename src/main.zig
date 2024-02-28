@@ -2,6 +2,7 @@ const std = @import("std");
 const zengine = @import("zengine");
 const zrender = @import("zrender");
 const zlm = @import("zlm");
+const physics = @import("physics.zig");
 
 pub const Vertex = extern struct {
     pub const attributes = [_]zrender.NamedAttribute{
@@ -29,7 +30,7 @@ pub fn main() !void {
         .globalSystems = &[_]type{ zrender.ZRenderSystem, ExampleSystem },
         .localSystems = &[_]type{},
     });
-    var engine = try ZEngine.init(allocator);
+    var engine = try ZEngine.init(allocator, .{});
     defer engine.deinit();
     var zrenderSystem = engine.registries.globalRegistry.getRegister(zrender.ZRenderSystem).?;
     zrenderSystem.run();
@@ -54,7 +55,8 @@ pub const ExampleSystem = struct {
         return .{ .cameraRotation = 0, .lastCameraRotation = 0, .rand = std.rand.DefaultPrng.init(@bitCast(std.time.microTimestamp())), .allocator = heapAllocator };
     }
 
-    pub fn systemInitGlobal(this: *@This(), registries: *zengine.RegistrySet) !void {
+    pub fn systemInitGlobal(this: *@This(), registries: *zengine.RegistrySet, settings: anytype) !void {
+        _ = settings;
         const ecs = &registries.globalEcsRegistry;
         var renderSystem = registries.globalRegistry.getRegister(zrender.ZRenderSystem).?;
         const entity = ecs.create();
@@ -64,6 +66,7 @@ pub const ExampleSystem = struct {
         } });
         // The uniforms unfortunately have to be allocated on the heap.
         // It's a single allocation that lasts the duration of this object, so I am not concerned in the slightest.
+        // In a more complex application, it would make sense to merge everything that is static in size and lasts the lifetime of the entity into a single allocation.
         const uniforms = try this.allocator.alloc(zrender.Uniform, 2);
         uniforms[0] = .{ .texture = try renderSystem.loadTexture(@embedFile("parrot.png")) };
         uniforms[1] = .{ .mat4 = zrender.Mat4.identity };

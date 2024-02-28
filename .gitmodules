@@ -7,3 +7,6 @@
 [submodule "zlm"]
 	path = zlm
 	url = https://github.com/ziglibs/zlm.git
+[submodule "Box2D.zig"]
+	path = Box2D.zig
+	url = https://github.com/bluesillybeard/Box2D.zig
