@@ -1,40 +1,132 @@
 const std = @import("std");
 const zengine = @import("zengine");
-const zrender = @import("zrender");
+const sdl = @import("sdl");
 const zlm = @import("zlm");
 const physics = @import("physics.zig");
-
-pub const Vertex = extern struct {
-    pub const attributes = [_]zrender.NamedAttribute{
-        .{ .name = "pos", .type = .f32x3 },
-        .{ .name = "texCoord", .type = .f32x2 },
-        .{ .name = "color", .type = .u8x4normalized },
-        .{ .name = "blend", .type = .f32 },
-    };
-    x: f32,
-    y: f32,
-    z: f32,
-    texX: f32,
-    texY: f32,
-    color: u32,
-    /// 0 -> texture, 1 -> color
-    blend: f32,
-};
+const gl = @import("gl.zig");
+const ecs = @import("ecs");
+const stbi = @cImport(@cInclude("stb_image.h"));
 
 pub fn main() !void {
+    // Initialize ZEngine
     var allocatorObj = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = allocatorObj.deinit();
     const allocator = allocatorObj.allocator();
 
     const ZEngine = zengine.ZEngine(.{
-        .globalSystems = &[_]type{ zrender.ZRenderSystem, ExampleSystem },
+        // Systems are order dependent, and ExampleSystem depeds on RenderSystem so RenderSystem must come first
+        .globalSystems = &[_]type{ RenderSystem, ExampleSystem },
         .localSystems = &[_]type{},
     });
-    var engine = try ZEngine.init(allocator, .{});
+    var engine = try ZEngine.init(allocator, .{
+        // This are read by the render system
+        .title = "ZEngine example",
+        .width = 800,
+        .height = 600,
+    });
     defer engine.deinit();
-    var zrenderSystem = engine.registries.globalRegistry.getRegister(zrender.ZRenderSystem).?;
-    zrenderSystem.run();
+    // Get the render system and run the game
+    const renderSystem = engine.registries.globalRegistry.getRegister(RenderSystem).?;
+    try renderSystem.run();
 }
+
+// RenderSystem is simply being used as a place to store data.
+// In a larger project, it would make sense for this system to also provide rendering functions as well,
+// but for now we're just directly calling OpenGL functions.
+pub const RenderSystem = struct {
+    pub const name: []const u8 = "render";
+    pub const components = [_]type{};
+
+    pub const OnFrameEventArgs = struct {
+        registries: *zengine.RegistrySet,
+    };
+    
+    // This is for verifying the system is in the right registry (global v.s local), and making sure all of the systems this one depends on is present before it.
+    pub fn comptimeVerification(comptime options: zengine.ZEngineComptimeOptions) bool {
+        _ = options;
+        return true;
+    }
+
+    pub fn init(staticAllocator: std.mem.Allocator, heapAllocator: std.mem.Allocator) @This() {
+        _ = staticAllocator;
+        // Initialize variables that won't be initialized on systemInit.
+        return .{
+            // publics
+            .frame = ecs.Signal(OnFrameEventArgs).init(heapAllocator),
+            .registries = undefined,
+            // privates
+            ._allocator = heapAllocator,
+            ._running = true,
+            ._window = undefined,
+            ._context = undefined,
+        };
+    }
+    
+    pub fn systemInitGlobal(this: *@This(), registries: *zengine.RegistrySet, settings: anytype) !void {
+        this.registries = registries;
+        // Initialize SDL and OpenGL
+        try sdl.init(sdl.InitFlags.everything);
+        this._window = try sdl.createWindow(settings.title, .default, .default, settings.width, settings.height, .{
+            .resizable = true,
+            .context = .opengl,
+        });
+        try sdl.gl.setAttribute(.{.context_major_version = 4});
+        try sdl.gl.setAttribute(.{.context_minor_version = 6});
+        try sdl.gl.setAttribute(.{.doublebuffer = true});
+        try sdl.gl.setAttribute(.{.red_size = 8});
+        try sdl.gl.setAttribute(.{.green_size = 8});
+        try sdl.gl.setAttribute(.{.blue_size = 8});
+        try sdl.gl.setAttribute(.{.depth_size = 24});
+        try sdl.gl.setAttribute(.{.context_flags = .{.debug = true}});
+        this._context = try sdl.gl.createContext(this._window);
+        try gl.load(void{}, loadProc);
+    }
+
+    // This function exists because SDL's getProcAddress does not have the correct signature.
+    fn loadProc(context: void, function: [:0]const u8) ?gl.FunctionPointer {
+        _ = context;
+        return @ptrCast(sdl.gl.getProcAddress(function));
+    }
+
+    pub fn run(this: *@This()) !void {
+        // Main loop
+        while (this._running) {
+            sdl.pumpEvents();
+            while (sdl.pollEvent()) |event| {
+                if(event == .quit) {
+                    this._running = false;
+                }
+            }
+            try sdl.gl.makeCurrent(this._context, this._window);
+            gl.clearColor(0, 0, 0, 1);
+            gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+            this.frame.publish(.{
+                .registries = this.registries,
+            });
+            try sdl.gl.setSwapInterval(.adaptive_vsync);
+            sdl.gl.swapWindow(this._window);
+        }
+    }
+
+    pub fn systemDeinitGlobal(this: *@This(), registries: *zengine.RegistrySet) void {
+        _ = registries;
+        sdl.gl.deleteContext(this._context);
+        this._window.destroy();
+    }
+
+    pub fn deinit(this: *@This()) void {
+        this.frame.deinit();
+    }
+    // Public things
+    // A reference to the engine's registries. We can get away with this since this data structure has a lifetime as long as the entire game.
+    registries: *zengine.RegistrySet,
+    frame: ecs.Signal(OnFrameEventArgs),
+    // Private things
+    _allocator: std.mem.Allocator,
+    _window: sdl.Window,
+    _context: sdl.gl.Context,
+    _running: bool,
+};
 
 pub const ExampleComponent = struct {
     rotation: f32,
@@ -45,130 +137,162 @@ pub const ExampleComponent = struct {
 pub const ExampleSystem = struct {
     pub const name: []const u8 = "example";
     pub const components = [_]type{ExampleComponent};
+
+    // This is for verifying the system is in the right registry (global v.s local), and making sure all of the systems this one depends on is present before it.
     pub fn comptimeVerification(comptime options: zengine.ZEngineComptimeOptions) bool {
         _ = options;
         return true;
     }
 
+    // This is just for initializing the object at a basic level. Allocate memory that lasts for the lifetime of this system with the static allocator,
+    // and other things that may be freed or incur more allocations before deinit should use the heap allocator.
     pub fn init(staticAllocator: std.mem.Allocator, heapAllocator: std.mem.Allocator) @This() {
         _ = staticAllocator;
-        return .{ .cameraRotation = 0, .lastCameraRotation = 0, .rand = std.rand.DefaultPrng.init(@bitCast(std.time.microTimestamp())), .allocator = heapAllocator };
+        return .{
+            .cameraRotation = 0, 
+            .lastCameraRotation = 0,
+            .rand = std.rand.DefaultPrng.init(@bitCast(std.time.microTimestamp())),
+            .allocator = heapAllocator,
+            .program = undefined,
+            .vertexBuffer = undefined,
+            .indexBuffer = undefined,
+            .vao = undefined,
+            .texture = undefined,
+        };
     }
 
+    // The system init method is much more capible, as it is run after all of the systems have been created in memory.
+    // It can get a reference to another system - this is how systems can act like libraries.
+    // There is also a settings input for user-defined settings. It is anytype since the same settings object is given to all systems,
+    // so its type cannot be pre-determined by ZEngine.
+    // Global systems are initialized first.
     pub fn systemInitGlobal(this: *@This(), registries: *zengine.RegistrySet, settings: anytype) !void {
         _ = settings;
-        const ecs = &registries.globalEcsRegistry;
-        var renderSystem = registries.globalRegistry.getRegister(zrender.ZRenderSystem).?;
-        const entity = ecs.create();
-        const pipeline = try renderSystem.createPipeline(@embedFile("shaderBin/shader.vert"), @embedFile("shaderBin/shader.frag"), .{ .attributes = &Vertex.attributes, .uniforms = &[_]zrender.NamedUniformTag{
-            .{ .name = "tex", .tag = .texture },
-            .{ .name = "transform", .tag = .mat4 },
-        } });
-        // The uniforms unfortunately have to be allocated on the heap.
-        // It's a single allocation that lasts the duration of this object, so I am not concerned in the slightest.
-        // In a more complex application, it would make sense to merge everything that is static in size and lasts the lifetime of the entity into a single allocation.
-        const uniforms = try this.allocator.alloc(zrender.Uniform, 2);
-        uniforms[0] = .{ .texture = try renderSystem.loadTexture(@embedFile("parrot.png")) };
-        uniforms[1] = .{ .mat4 = zrender.Mat4.identity };
-        ecs.add(entity, zrender.RenderComponent{ .mesh = try renderSystem.loadMesh(Vertex, &[_]Vertex{
-            .{ .x = -1, .y = -1, .z = 0, .texX = 0, .texY = 1, .color = 0xFFFF0000, .blend = 0 },
-            .{ .x = -1, .y = 1, .z = 0, .texX = 0, .texY = 0, .color = 0xFFFF0000, .blend = 0 },
-            .{ .x = 1, .y = -1, .z = 0, .texX = 1, .texY = 1, .color = 0xFFFF0000, .blend = 0 },
-            .{ .x = 1, .y = 1, .z = 0, .texX = 1, .texY = 0, .color = 0xFFFF0000, .blend = 0 },
-        }, &[_]u16{ 0, 1, 2, 1, 3, 2 }, pipeline), .pipeline = pipeline, .uniforms = uniforms });
-        ecs.add(entity, ExampleComponent{ .rotation = 0, .lastRotation = 0 });
-        renderSystem.onUpdate.sink().connect(&update);
-        renderSystem.onFrame.sink().connect(&frame);
-        renderSystem.onType.sink().connect(&onType);
-        renderSystem.onKeyDown.sink().connect(&onKeyDown);
-        renderSystem.onKeyUp.sink().connect(&onKeyUp);
-        renderSystem.onMousePress.sink().connect(&onClick);
-    }
-
-    fn onKeyDown(args: zrender.OnKeyDownEventArgs) void {
-        std.debug.print("Key {} down\n", .{args.key});
-    }
-
-    fn onKeyUp(args: zrender.OnKeyUpEventArgs) void {
-        std.debug.print("Key {} up\n", .{args.key});
-    }
-
-    fn onType(args: zrender.OnTypeEventArgs) void {
-        // 4 bytes for the longest codepoint, one more for null terminator
-        var buffer = [4:0]u8{ 0, 0, 0, 0 };
-        // TODO: make sure the character fits in a u21
-        _ = std.unicode.utf8Encode(@intCast(args.character), &buffer) catch std.debug.print("Warn: Invalid unicode point: {}", .{args.character});
-        std.debug.print("Typed, {s}\n", .{buffer});
-    }
-
-    fn onClick(args: zrender.OnMousePressEventArgs) void {
-        std.debug.print("click {}\n", .{args.button});
-        const ecs = &args.registries.globalEcsRegistry;
-        const renderSystem = args.registries.globalRegistry.getRegister(zrender.ZRenderSystem).?;
-        const this = args.registries.globalRegistry.getRegister(ExampleSystem).?;
-        var view = ecs.view(.{ ExampleComponent, zrender.RenderComponent }, .{});
-        var iter = view.entityIterator();
-        while (iter.next()) |entity| {
-            // grab the mesh of the entity ahead of time
-            const mesh = view.get(zrender.RenderComponent, entity).mesh;
-            const random = this.rand.random();
-            switch (args.button) {
-                0 => {
-                    // randomize vertices
-                    const vertices = renderSystem.mapMeshVertices(Vertex, mesh, 0, mesh.numVertices);
-                    for (vertices) |*vertex| {
-                        vertex.x = random.float(f32);
-                        vertex.y = random.float(f32);
-                        vertex.z = random.float(f32);
-                    }
-                    renderSystem.unmapMeshVertices(Vertex, mesh, vertices);
-                },
-                1 => {
-                    // shuffle indices
-                    const indices = renderSystem.mapMeshIndices(mesh, 0, mesh.numIndices);
-                    for (0..indices.len) |i| {
-                        //swap this index with a random one
-                        const ii = random.intRangeLessThan(usize, 0, indices.len);
-                        const temp = indices[i];
-                        indices[i] = indices[ii];
-                        indices[ii] = temp;
-                    }
-                    renderSystem.unmapMeshIndices(mesh, indices);
-                },
-                else => {},
+        const entity = registries.globalEcsRegistry.create();
+        registries.globalEcsRegistry.add(entity, ExampleComponent{ .rotation = 0, .lastRotation = 0 });
+        // hook into required events
+        const renderSystem = registries.globalRegistry.getRegister(RenderSystem).?;
+        renderSystem.frame.sink().connectBound(this, "frame");
+        // Load all of the things we need
+        // shaders 
+        {
+            const vertexShader = gl.createShader(gl.VERTEX_SHADER);
+            const vertexShaderSource = @embedFile("shader.vert.glsl");
+            gl.shaderSource(vertexShader, 1, &[1][*:0]const u8{vertexShaderSource.ptr}, &[1]gl.GLint{vertexShaderSource.len});
+            gl.compileShader(vertexShader);
+            var status: gl.GLint = 0;
+            gl.getShaderiv(vertexShader, gl.COMPILE_STATUS, &status);
+            if(status == gl.FALSE) {
+                // The shader failed to compile, panic!
+                // TODO: return error instead of panicking
+                var buffer: [8191:0]u8 = undefined;
+                gl.getShaderInfoLog(vertexShader, buffer.len+1, null, &buffer);
+                const string: [*:0]const u8 = &buffer;
+                std.debug.print("Failed to compile vertex shader: {s}\n", .{string});
+                std.debug.panic("Failed to compile shaders.", .{});
             }
+            const fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
+            const fragmentShaderSource = @embedFile("shader.frag.glsl");
+            gl.shaderSource(fragmentShader, 1, &[1][*:0]const u8{fragmentShaderSource}, &[1]gl.GLint{fragmentShaderSource.len});
+            gl.compileShader(fragmentShader);
+            gl.getShaderiv(fragmentShader, gl.COMPILE_STATUS, &status);
+            if(status == gl.FALSE) {
+                // The shader failed to compile, panic!
+                // TODO: return error instead of panicking
+                var buffer: [8191:0]u8 = undefined;
+                gl.getShaderInfoLog(fragmentShader, buffer.len+1, null, &buffer);
+                const string: [*:0]const u8 = &buffer;
+                std.debug.print("Failed to compile fragment shader: {s}\n", .{string});
+                std.debug.panic("Failed to compile shaders.", .{});
+            }
+
+            this.program = gl.createProgram();
+            gl.attachShader(this.program, vertexShader);
+            gl.attachShader(this.program, fragmentShader);
+            gl.linkProgram(this.program);
+            gl.getProgramiv(this.program,gl.LINK_STATUS, &status);
+            if(status == gl.FALSE) {
+                var buffer: [8191:0]u8 = undefined;
+                gl.getProgramInfoLog(this.program, buffer.len + 1, null, &buffer);
+                const string: [*:0]const u8 = &buffer;
+                std.debug.print("Failed to link program: {s}\n", .{string});
+                std.debug.panic("Failed to compile shaders.", .{});
+            }
+            gl.detachShader(this.program, vertexShader);
+            gl.detachShader(this.program, fragmentShader);
+            gl.deleteShader(vertexShader);
+            gl.deleteShader(fragmentShader);
+        }
+        // quad mesh
+        {
+            const meshData = [_]f32 {
+                //x, y, z, tx, ty
+                -1, -1, 0, 0, 1,
+                -1,  1, 0, 0, 0,
+                 1, -1, 0, 1, 1,
+                 1,  1, 0, 1, 0,
+            };
+            const indices = [_]u16 {
+                 0, 1, 2, 1, 3, 2,
+            };
+            var buffers: [2]gl.GLuint = undefined;
+            gl.genBuffers(buffers.len, &buffers);
+            this.vertexBuffer = buffers[0];
+            this.indexBuffer = buffers[1];
+            // So much "bind this do that bind that do this bind bind bind bind bind" and it's starting to drive me a bit mad that the number of OpenGL calls I have to do is practically doubled because of a descision by some rando back in the 90s.
+            gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, meshData.len * @sizeOf(f32), &meshData, gl.STATIC_DRAW);
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.indexBuffer);
+            gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices.len * @sizeOf(u16), &indices, gl.STATIC_DRAW);
+            gl.genVertexArrays(1, &this.vao);
+            gl.bindVertexArray(this.vao);
+            gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
+            gl.vertexAttribPointer(0, 3, gl.FLOAT, gl.FALSE, 5 * @sizeOf(f32), null);
+            gl.vertexAttribPointer(1, 2, gl.FLOAT, gl.FALSE, 5 * @sizeOf(f32), @ptrFromInt(3 * @sizeOf(f32)));
+            gl.enableVertexAttribArray(0);
+            gl.enableVertexAttribArray(1);
+        }
+        // bird texture
+        {
+            // Load the texture
+            // ZLS is freaking stupid and can't find the header file
+            // So I had to do this without any IDE help and it was quite annoying
+            const imageSource = @embedFile("parrot.png");
+            var width: c_int = undefined;
+            var height: c_int = undefined;
+            const imageData: [*]u8 = stbi.stbi_load_from_memory(imageSource.ptr, imageSource.len, &width, &height, null, 4);
+            defer stbi.stbi_image_free(imageData);
+            // Now we have the data, load it into opengl
+            gl.genTextures(1, &this.texture);
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, this.texture);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, @intCast(width), @intCast(height), 0, gl.RGBA, gl.UNSIGNED_BYTE, imageData);
+            gl.generateMipmap(gl.TEXTURE_2D);
         }
     }
 
-    fn update(args: zrender.OnUpdateEventArgs) void {
-        const ecs = &args.registries.globalEcsRegistry;
-        var this = args.registries.globalRegistry.getRegister(ExampleSystem).?;
-        const deltaSeconds = @as(f32, @floatFromInt(args.delta)) / std.time.us_per_s;
-        this.lastCameraRotation = this.cameraRotation;
-        this.cameraRotation += std.math.pi / 8.0 * deltaSeconds;
-        var view = ecs.view(.{ ExampleComponent, zrender.RenderComponent }, .{});
-        var iter = view.entityIterator();
-        while (iter.next()) |entity| {
-            const exampleComponent = view.get(ExampleComponent, entity);
-            exampleComponent.lastRotation = exampleComponent.rotation;
-            exampleComponent.rotation += std.math.pi * deltaSeconds;
-        }
-    }
-
-    fn frame(args: zrender.OnFrameEventArgs) void {
-        const ecs = &args.registries.globalEcsRegistry;
-        const this = args.registries.globalRegistry.getRegister(ExampleSystem).?;
-        const renderSystem = args.registries.globalRegistry.getRegister(zrender.ZRenderSystem).?;
-        var view = ecs.view(.{ ExampleComponent, zrender.RenderComponent }, .{});
+    pub fn frame(this: *@This(), args: RenderSystem.OnFrameEventArgs) void {
+        const entities = &args.registries.globalEcsRegistry;
+        // TODO: update at fixed step
+        this.update(entities);
+        var view = entities.view(.{ ExampleComponent}, .{});
         var iter = view.entityIterator();
         // From 0 to 1 (and often >1), how far into the current update are we?
         // Holy macaroni, casting with floats in Zig is an absolute nightmare.
         // I really wish @floatFromInt and @intFromFloat took the type as an optional parameter instead having to slap '@as' everywhere
-        const t = @as(f32, @floatFromInt(args.time - renderSystem.updateTime)) / @as(f32, @floatFromInt(renderSystem.updateDelta));
+        const t = 0;//@as(f32, @floatFromInt(args.time - renderSystem.updateTime)) / @as(f32, @floatFromInt(renderSystem.updateDelta));
+        // Draw all of our entities
+        gl.useProgram(this.program);
+        gl.bindVertexArray(this.vao);
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.indexBuffer);
+        gl.bindTexture(gl.TEXTURE_2D, this.texture);
         while (iter.next()) |entity| {
             // TODO: lots of optimization potential here
-            const exampleComponent = view.get(ExampleComponent, entity);
-            const renderComponent = view.get(zrender.RenderComponent, entity);
+            const exampleComponent = view.get(entity);
             var lastTransform = zlm.Mat4.identity;
             var transform = zlm.Mat4.identity;
             // Object transformation
@@ -181,52 +305,95 @@ pub const ExampleSystem = struct {
             lastTransform = lastTransform.mul(zlm.Mat4.createLookAt(zlm.Vec3{ .x = @cos(this.lastCameraRotation) * 5, .y = 0, .z = @sin(this.lastCameraRotation) * 5 }, zlm.Vec3.zero, zlm.Vec3.unitY));
             lastTransform = lastTransform.mul(zlm.Mat4.createPerspective(zlm.toRadians(80.0), 1, 0.0001, 10000));
 
-            renderComponent.uniforms[1].mat4 = zlmToZrenderMat4(matrixLerp(lastTransform, transform, t));
+            // the final transformation to send to OpenGL
+            var finalTransform = matrixLerp(lastTransform, transform, t);
+            // Zlm Mat4 is fortunately compatible with OpenGL. The transform matrix is ALWAYS bound to location 0.
+            gl.uniformMatrix4fv(0, 1, 0, @ptrCast(&finalTransform));
+            gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, null);
         }
     }
 
+    fn update(this: *@This(), entities: *ecs.Registry) void {
+        //const entities = &args.registries.globalEcsRegistry;
+        const deltaSeconds  = 1.0 / 60.0;//= @as(f32, @floatFromInt(args.delta)) / std.time.us_per_s;
+        this.lastCameraRotation = this.cameraRotation;
+        this.cameraRotation += std.math.pi / 8.0 * deltaSeconds;
+        var view = entities.view(.{ ExampleComponent}, .{});
+        var iter = view.entityIterator();
+        while (iter.next()) |entity| {
+            const exampleComponent = view.get(entity);
+            exampleComponent.lastRotation = exampleComponent.rotation;
+            exampleComponent.rotation += std.math.pi * deltaSeconds;
+        }
+    }
+
+    // fn onKeyDown(args: zrender.OnKeyDownEventArgs) void {
+    //     std.debug.print("Key {} down\n", .{args.key});
+    // }
+
+    // fn onKeyUp(args: zrender.OnKeyUpEventArgs) void {
+    //     std.debug.print("Key {} up\n", .{args.key});
+    // }
+
+    // fn onType(args: zrender.OnTypeEventArgs) void {
+    //     // 4 bytes for the longest codepoint, one more for null terminator
+    //     var buffer = [4:0]u8{ 0, 0, 0, 0 };
+    //     // TODO: make sure the character fits in a u21
+    //     _ = std.unicode.utf8Encode(@intCast(args.character), &buffer) catch std.debug.print("Warn: Invalid unicode point: {}", .{args.character});
+    //     std.debug.print("Typed, {s}\n", .{buffer});
+    // }
+
+    // fn onClick(args: zrender.OnMousePressEventArgs) void {
+    //     std.debug.print("click {}\n", .{args.button});
+    //     const ecs = &args.registries.globalEcsRegistry;
+    //     const renderSystem = args.registries.globalRegistry.getRegister(zrender.ZRenderSystem).?;
+    //     const this = args.registries.globalRegistry.getRegister(ExampleSystem).?;
+    //     var view = ecs.view(.{ ExampleComponent, zrender.RenderComponent }, .{});
+    //     var iter = view.entityIterator();
+    //     while (iter.next()) |entity| {
+    //         // grab the mesh of the entity ahead of time
+    //         const mesh = view.get(zrender.RenderComponent, entity).mesh;
+    //         const random = this.rand.random();
+    //         switch (args.button) {
+    //             0 => {
+    //                 // randomize vertices
+    //                 const vertices = renderSystem.mapMeshVertices(Vertex, mesh, 0, mesh.numVertices);
+    //                 for (vertices) |*vertex| {
+    //                     vertex.x = random.float(f32);
+    //                     vertex.y = random.float(f32);
+    //                     vertex.z = random.float(f32);
+    //                 }
+    //                 renderSystem.unmapMeshVertices(Vertex, mesh, vertices);
+    //             },
+    //             1 => {
+    //                 // shuffle indices
+    //                 const indices = renderSystem.mapMeshIndices(mesh, 0, mesh.numIndices);
+    //                 for (0..indices.len) |i| {
+    //                     //swap this index with a random one
+    //                     const ii = random.intRangeLessThan(usize, 0, indices.len);
+    //                     const temp = indices[i];
+    //                     indices[i] = indices[ii];
+    //                     indices[ii] = temp;
+    //                 }
+    //                 renderSystem.unmapMeshIndices(mesh, indices);
+    //             },
+    //             else => {},
+    //         }
+    //     }
+    // }
+
+    // This method probably won't have a lot for most systems, however it is present for doing things like serializing save data or disconnecting from servers.
+    // Put simply, it is a deinit method that still has access to all of the systems.
+    // Local systems are deinited first.
     pub fn systemDeinitGlobal(this: *@This(), registries: *zengine.RegistrySet) void {
-        const ecs = &registries.globalEcsRegistry;
-        var view = ecs.view(.{ ExampleComponent, zrender.RenderComponent }, .{});
-        var iterator = view.entityIterator();
-        while (iterator.next()) |entity| {
-            const renderComponent = view.get(zrender.RenderComponent, entity);
-            this.allocator.free(renderComponent.uniforms);
-        }
-    }
-
-    pub fn deinit(this: *@This()) void {
+        _ = registries;
         _ = this;
     }
 
-    fn zlmToZrenderMat4(matrix: zlm.Mat4) zrender.Mat4 {
-        return zrender.Mat4{
-            .m00 = matrix.fields[0][0],
-            .m01 = matrix.fields[1][0],
-            .m02 = matrix.fields[2][0],
-            .m03 = matrix.fields[3][0],
-            .m10 = matrix.fields[0][1],
-            .m11 = matrix.fields[1][1],
-            .m12 = matrix.fields[2][1],
-            .m13 = matrix.fields[3][1],
-            .m20 = matrix.fields[0][2],
-            .m21 = matrix.fields[1][2],
-            .m22 = matrix.fields[2][2],
-            .m23 = matrix.fields[3][2],
-            .m30 = matrix.fields[0][3],
-            .m31 = matrix.fields[1][3],
-            .m32 = matrix.fields[2][3],
-            .m33 = matrix.fields[3][3],
-        };
-    }
-
-    fn zrenderToZlmMat4(m: zrender.Mat4) zlm.Mat4 {
-        return zrender.Mat4{ .fields = [_][4]f32{
-            [_]f32{ m.m00, m.m10, m.m20, m.m30 },
-            [_]f32{ m.m01, m.m11, m.m21, m.m31 },
-            [_]f32{ m.m02, m.m12, m.m22, m.m32 },
-            [_]f32{ m.m03, m.m13, m.m23, m.m33 },
-        } };
+    // At a minimum, this method should clear out any memory that was allocated using the heap allocator given at init.
+    // don't want to free any memory in the systemDeinit method, as other systems could reference it and freeing memory too early could cause access violations.
+    pub fn deinit(this: *@This()) void {
+        _ = this;
     }
 
     fn matrixLerp(m0: zlm.Mat4, m1: zlm.Mat4, t: f32) zlm.Mat4 {
@@ -250,4 +417,9 @@ pub const ExampleSystem = struct {
     lastCameraRotation: f32,
     rand: std.rand.DefaultPrng,
     allocator: std.mem.Allocator,
+    program: gl.GLuint,
+    vertexBuffer: gl.GLuint,
+    indexBuffer: gl.GLuint,
+    vao: gl.GLuint,
+    texture: gl.GLuint,
 };

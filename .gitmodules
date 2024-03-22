@@ -1,12 +1,12 @@
 [submodule "ZEngine"]
 	path = ZEngine
 	url = https://github.com/bluesillybeard/ZEngine
-[submodule "ZRender"]
-	path = ZRender
-	url = https://github.com/bluesillybeard/ZRender
 [submodule "zlm"]
 	path = zlm
 	url = https://github.com/ziglibs/zlm.git
 [submodule "Box2D.zig"]
 	path = Box2D.zig
 	url = https://github.com/bluesillybeard/Box2D.zig
+[submodule "SDL.zig"]
+	path = SDL.zig
+	url = https://github.com/MasterQ32/SDL.zig.git

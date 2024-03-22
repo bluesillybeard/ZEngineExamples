@@ -1,7 +1,6 @@
 const std = @import("std");
-const zrender = @import("ZRender/build.zig");
 const box2d = @import("Box2D.zig/build.zig");
-
+const sdl = @import("SDL.zig/Sdk.zig");
 pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -30,12 +29,14 @@ pub fn build(b: *std.Build) !void {
     exe.root_module.addImport("ecs", ecsModule);
     exe.root_module.addImport("zengine", zengineModule);
     exe.root_module.addImport("zlm", zlmModule);
-    const zrenderLib = try zrender.link("ZRender", b, zengineModule, ecsModule, .{ .KmakeOptions = .{}, .shaders = &[_]zrender.Shader{
-        .{ .sourcePath = "src/shaders/shader.frag.glsl", .destPath = "src/shaderBin/shader.frag" },
-        .{ .sourcePath = "src/shaders/shader.vert.glsl", .destPath = "src/shaderBin/shader.vert" },
-    }, .target = target, .optimize = optimize });
-    exe.root_module.addImport("zrender", &zrenderLib.root_module);
+    var sdlSdk = sdl.init(b, null);
+    sdlSdk.link(exe, .Dynamic);
+    exe.root_module.addImport("sdl", sdlSdk.getWrapperModule());
     try box2d.link("Box2D.zig/box2c/", exe, .{});
+    exe.addIncludePath(.{.path = "src/"});
+    exe.addCSourceFile(.{
+        .file = .{.path = "src/stb_image.c"},
+    });
     b.installArtifact(exe);
     const run = b.addRunArtifact(exe);
     const runStep = b.step("run", "run the example");
