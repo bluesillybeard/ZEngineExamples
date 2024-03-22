@@ -1,5 +1,4 @@
 const std = @import("std");
-const box2d = @import("Box2D.zig/build.zig");
 const sdl = @import("SDL.zig/Sdk.zig");
 pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
@@ -32,7 +31,6 @@ pub fn build(b: *std.Build) !void {
     var sdlSdk = sdl.init(b, null);
     sdlSdk.link(exe, .Dynamic);
     exe.root_module.addImport("sdl", sdlSdk.getWrapperModule());
-    try box2d.link("Box2D.zig/box2c/", exe, .{});
     exe.addIncludePath(.{.path = "src/"});
     exe.addCSourceFile(.{
         .file = .{.path = "src/stb_image.c"},

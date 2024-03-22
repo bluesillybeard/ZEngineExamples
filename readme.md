@@ -1,6 +1,6 @@
 # ZEngine Examples
 
-Examples on how to use [ZEngine](https://github.com/bluesillybeard/ZEngine) and its official modules.
+Simple example on how to use [ZEngine](https://github.com/bluesillybeard/ZEngine) with SDL and OpenGL.
 
 ## Dependencies
 - Zig version 0.12.0-dev.3146+671c2acf4 or compatible
