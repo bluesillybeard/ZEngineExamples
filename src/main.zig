@@ -2,7 +2,6 @@ const std = @import("std");
 const zengine = @import("zengine");
 const sdl = @import("sdl");
 const zlm = @import("zlm");
-const physics = @import("physics.zig");
 const gl = @import("gl.zig");
 const ecs = @import("ecs");
 const stbi = @cImport(@cInclude("stb_image.h"));
@@ -239,18 +238,13 @@ pub const ExampleSystem = struct {
             gl.genBuffers(buffers.len, &buffers);
             this.vertexBuffer = buffers[0];
             this.indexBuffer = buffers[1];
-            // So much "bind this do that bind that do this bind bind bind bind bind" and it's starting to drive me a bit mad that the number of OpenGL calls I have to do is practically doubled because of a descision by some rando back in the 90s.
-            gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
-            gl.bufferData(gl.ARRAY_BUFFER, meshData.len * @sizeOf(f32), &meshData, gl.STATIC_DRAW);
-            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.indexBuffer);
-            gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices.len * @sizeOf(u16), &indices, gl.STATIC_DRAW);
+            gl.namedBufferStorage(this.vertexBuffer, meshData.len * @sizeOf(f32), &meshData, 0);
+            gl.namedBufferStorage(this.indexBuffer, indices.len * @sizeOf(u16), &indices, 0);
             gl.genVertexArrays(1, &this.vao);
-            gl.bindVertexArray(this.vao);
-            gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
-            gl.vertexAttribPointer(0, 3, gl.FLOAT, gl.FALSE, 5 * @sizeOf(f32), null);
-            gl.vertexAttribPointer(1, 2, gl.FLOAT, gl.FALSE, 5 * @sizeOf(f32), @ptrFromInt(3 * @sizeOf(f32)));
-            gl.enableVertexAttribArray(0);
-            gl.enableVertexAttribArray(1);
+            gl.enableVertexArrayAttrib(this.vao, 0);
+            gl.enableVertexArrayAttrib(this.vao, 1);
+            gl.vertexArrayAttribFormat(this.vao, 0, 3, gl.FLOAT, gl.FALSE, 0);
+            gl.vertexArrayAttribFormat(this.vao, 1, 2, gl.FLOAT, gl.FALSE, 3 * @sizeOf(f32));
         }
         // bird texture
         {
@@ -288,6 +282,9 @@ pub const ExampleSystem = struct {
         // Draw all of our entities
         gl.useProgram(this.program);
         gl.bindVertexArray(this.vao);
+        gl.bindVertexBuffer(0, this.vertexBuffer, 0, 5 * @sizeOf(f32));
+        gl.vertexArrayAttribBinding(this.vao, 0, 0);
+        gl.vertexArrayAttribBinding(this.vao, 1, 0);
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.indexBuffer);
         gl.bindTexture(gl.TEXTURE_2D, this.texture);
         while (iter.next()) |entity| {
