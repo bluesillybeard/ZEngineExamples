@@ -249,8 +249,6 @@ pub const ExampleSystem = struct {
         // bird texture
         {
             // Load the texture
-            // ZLS is freaking stupid and can't find the header file
-            // So I had to do this without any IDE help and it was quite annoying
             const imageSource = @embedFile("parrot.png");
             var width: c_int = undefined;
             var height: c_int = undefined;
@@ -323,61 +321,6 @@ pub const ExampleSystem = struct {
             exampleComponent.rotation += std.math.pi * deltaSeconds;
         }
     }
-
-    // fn onKeyDown(args: zrender.OnKeyDownEventArgs) void {
-    //     std.debug.print("Key {} down\n", .{args.key});
-    // }
-
-    // fn onKeyUp(args: zrender.OnKeyUpEventArgs) void {
-    //     std.debug.print("Key {} up\n", .{args.key});
-    // }
-
-    // fn onType(args: zrender.OnTypeEventArgs) void {
-    //     // 4 bytes for the longest codepoint, one more for null terminator
-    //     var buffer = [4:0]u8{ 0, 0, 0, 0 };
-    //     // TODO: make sure the character fits in a u21
-    //     _ = std.unicode.utf8Encode(@intCast(args.character), &buffer) catch std.debug.print("Warn: Invalid unicode point: {}", .{args.character});
-    //     std.debug.print("Typed, {s}\n", .{buffer});
-    // }
-
-    // fn onClick(args: zrender.OnMousePressEventArgs) void {
-    //     std.debug.print("click {}\n", .{args.button});
-    //     const ecs = &args.registries.globalEcsRegistry;
-    //     const renderSystem = args.registries.globalRegistry.getRegister(zrender.ZRenderSystem).?;
-    //     const this = args.registries.globalRegistry.getRegister(ExampleSystem).?;
-    //     var view = ecs.view(.{ ExampleComponent, zrender.RenderComponent }, .{});
-    //     var iter = view.entityIterator();
-    //     while (iter.next()) |entity| {
-    //         // grab the mesh of the entity ahead of time
-    //         const mesh = view.get(zrender.RenderComponent, entity).mesh;
-    //         const random = this.rand.random();
-    //         switch (args.button) {
-    //             0 => {
-    //                 // randomize vertices
-    //                 const vertices = renderSystem.mapMeshVertices(Vertex, mesh, 0, mesh.numVertices);
-    //                 for (vertices) |*vertex| {
-    //                     vertex.x = random.float(f32);
-    //                     vertex.y = random.float(f32);
-    //                     vertex.z = random.float(f32);
-    //                 }
-    //                 renderSystem.unmapMeshVertices(Vertex, mesh, vertices);
-    //             },
-    //             1 => {
-    //                 // shuffle indices
-    //                 const indices = renderSystem.mapMeshIndices(mesh, 0, mesh.numIndices);
-    //                 for (0..indices.len) |i| {
-    //                     //swap this index with a random one
-    //                     const ii = random.intRangeLessThan(usize, 0, indices.len);
-    //                     const temp = indices[i];
-    //                     indices[i] = indices[ii];
-    //                     indices[ii] = temp;
-    //                 }
-    //                 renderSystem.unmapMeshIndices(mesh, indices);
-    //             },
-    //             else => {},
-    //         }
-    //     }
-    // }
 
     // This method probably won't have a lot for most systems, however it is present for doing things like serializing save data or disconnecting from servers.
     // Put simply, it is a deinit method that still has access to all of the systems.
