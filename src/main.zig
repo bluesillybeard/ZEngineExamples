@@ -235,12 +235,12 @@ pub const ExampleSystem = struct {
                  0, 1, 2, 1, 3, 2,
             };
             var buffers: [2]gl.GLuint = undefined;
-            gl.genBuffers(buffers.len, &buffers);
+            gl.createBuffers(buffers.len, &buffers);
             this.vertexBuffer = buffers[0];
             this.indexBuffer = buffers[1];
             gl.namedBufferStorage(this.vertexBuffer, meshData.len * @sizeOf(f32), &meshData, 0);
             gl.namedBufferStorage(this.indexBuffer, indices.len * @sizeOf(u16), &indices, 0);
-            gl.genVertexArrays(1, &this.vao);
+            gl.createVertexArrays(1, &this.vao);
             gl.enableVertexArrayAttrib(this.vao, 0);
             gl.enableVertexArrayAttrib(this.vao, 1);
             gl.vertexArrayAttribFormat(this.vao, 0, 3, gl.FLOAT, gl.FALSE, 0);
