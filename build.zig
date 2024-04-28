@@ -29,7 +29,7 @@ pub fn build(b: *std.Build) !void {
     exe.root_module.addImport("zengine", zengineModule);
     exe.root_module.addImport("zlm", zlmModule);
     var sdlSdk = sdl.init(b, null);
-    sdlSdk.link(exe, .Dynamic);
+    sdlSdk.link(exe, .dynamic);
     exe.root_module.addImport("sdl", sdlSdk.getWrapperModule());
     exe.addIncludePath(.{.path = "src/"});
     exe.addCSourceFile(.{

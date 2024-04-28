@@ -12,20 +12,16 @@ pub fn main() !void {
     defer _ = allocatorObj.deinit();
     const allocator = allocatorObj.allocator();
 
-    const ZEngine = zengine.ZEngine(.{
-        // Systems are order dependent, and ExampleSystem depeds on RenderSystem so RenderSystem must come first
-        .globalSystems = &[_]type{ RenderSystem, ExampleSystem },
-        .localSystems = &[_]type{},
-    });
-    var engine = try ZEngine.init(allocator, .{
-        // This are read by the render system
-        .title = "ZEngine example",
-        .width = 800,
-        .height = 600,
-    });
+    var engine = zengine.ZEngine.init(allocator);
     defer engine.deinit();
+    var renderSystem: RenderSystem = undefined;
+    try renderSystem.init(allocator, "ZRender Example", 800, 600, &engine);
+    defer renderSystem.systemDeinit();
+    try engine.registerGlobalSystem(RenderSystem, &renderSystem);
+    var exampleSystem: ExampleSystem = undefined;
+    try exampleSystem.init(allocator, &engine);
     // Get the render system and run the game
-    const renderSystem = engine.registries.globalRegistry.getRegister(RenderSystem).?;
+    // const renderSystem = engine.registries.globalRegistry.getRegister(RenderSystem).?;
     try renderSystem.run();
 }
 
@@ -33,39 +29,23 @@ pub fn main() !void {
 // In a larger project, it would make sense for this system to also provide rendering functions as well,
 // but for now we're just directly calling OpenGL functions.
 pub const RenderSystem = struct {
-    pub const name: []const u8 = "render";
-    pub const components = [_]type{};
-
     pub const OnFrameEventArgs = struct {
-        registries: *zengine.RegistrySet,
+        engine: *zengine.ZEngine,
     };
-    
-    // This is for verifying the system is in the right registry (global v.s local), and making sure all of the systems this one depends on is present before it.
-    pub fn comptimeVerification(comptime options: zengine.ZEngineComptimeOptions) bool {
-        _ = options;
-        return true;
-    }
 
-    pub fn init(staticAllocator: std.mem.Allocator, heapAllocator: std.mem.Allocator) @This() {
-        _ = staticAllocator;
-        // Initialize variables that won't be initialized on systemInit.
-        return .{
+    pub fn init(this: *RenderSystem, heapAllocator: std.mem.Allocator, title: [:0]const u8, width: usize, height: usize, engine: *zengine.ZEngine) !void {
+        this.* = .{
             // publics
             .frame = ecs.Signal(OnFrameEventArgs).init(heapAllocator),
-            .registries = undefined,
+            .engine = engine,
             // privates
             ._allocator = heapAllocator,
             ._running = true,
             ._window = undefined,
             ._context = undefined,
         };
-    }
-    
-    pub fn systemInitGlobal(this: *@This(), registries: *zengine.RegistrySet, settings: anytype) !void {
-        this.registries = registries;
-        // Initialize SDL and OpenGL
         try sdl.init(sdl.InitFlags.everything);
-        this._window = try sdl.createWindow(settings.title, .default, .default, settings.width, settings.height, .{
+        this._window = try sdl.createWindow(title, .default, .default, width, height, .{
             .resizable = true,
             .context = .opengl,
         });
@@ -100,25 +80,27 @@ pub const RenderSystem = struct {
             gl.clearColor(0, 0, 0, 1);
             gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
             this.frame.publish(.{
-                .registries = this.registries,
+                .engine = this.engine,
             });
             try sdl.gl.setSwapInterval(.adaptive_vsync);
             sdl.gl.swapWindow(this._window);
         }
     }
 
-    pub fn systemDeinitGlobal(this: *@This(), registries: *zengine.RegistrySet) void {
-        _ = registries;
+    // Other systems rely on this system's memory being valid throughout deinit
+    // So just to be safe we deinit very last in a separate function
+    pub fn systemDeinit(this: *@This()) void {
         sdl.gl.deleteContext(this._context);
         this._window.destroy();
-    }
-
-    pub fn deinit(this: *@This()) void {
         this.frame.deinit();
     }
+
+    // This is a required function for all ZEngine systems
+    pub fn deinit(this: *@This()) void {
+        _ = this;
+    }
     // Public things
-    // A reference to the engine's registries. We can get away with this since this data structure has a lifetime as long as the entire game.
-    registries: *zengine.RegistrySet,
+    engine: *zengine.ZEngine,
     frame: ecs.Signal(OnFrameEventArgs),
     // Private things
     _allocator: std.mem.Allocator,
@@ -134,20 +116,8 @@ pub const ExampleComponent = struct {
 };
 
 pub const ExampleSystem = struct {
-    pub const name: []const u8 = "example";
-    pub const components = [_]type{ExampleComponent};
-
-    // This is for verifying the system is in the right registry (global v.s local), and making sure all of the systems this one depends on is present before it.
-    pub fn comptimeVerification(comptime options: zengine.ZEngineComptimeOptions) bool {
-        _ = options;
-        return true;
-    }
-
-    // This is just for initializing the object at a basic level. Allocate memory that lasts for the lifetime of this system with the static allocator,
-    // and other things that may be freed or incur more allocations before deinit should use the heap allocator.
-    pub fn init(staticAllocator: std.mem.Allocator, heapAllocator: std.mem.Allocator) @This() {
-        _ = staticAllocator;
-        return .{
+    pub fn init(this: *ExampleSystem, heapAllocator: std.mem.Allocator, engine: *zengine.ZEngine) !void {
+        this.* = .{
             .cameraRotation = 0, 
             .lastCameraRotation = 0,
             .rand = std.rand.DefaultPrng.init(@bitCast(std.time.microTimestamp())),
@@ -158,19 +128,11 @@ pub const ExampleSystem = struct {
             .vao = undefined,
             .texture = undefined,
         };
-    }
-
-    // The system init method is much more capible, as it is run after all of the systems have been created in memory.
-    // It can get a reference to another system - this is how systems can act like libraries.
-    // There is also a settings input for user-defined settings. It is anytype since the same settings object is given to all systems,
-    // so its type cannot be pre-determined by ZEngine.
-    // Global systems are initialized first.
-    pub fn systemInitGlobal(this: *@This(), registries: *zengine.RegistrySet, settings: anytype) !void {
-        _ = settings;
-        const entity = registries.globalEcsRegistry.create();
-        registries.globalEcsRegistry.add(entity, ExampleComponent{ .rotation = 0, .lastRotation = 0 });
+        const entities = engine.getGlobalEcs();
+        const entity = entities.create();
+        entities.add(entity, ExampleComponent{ .rotation = 0, .lastRotation = 0 });
         // hook into required events
-        const renderSystem = registries.globalRegistry.getRegister(RenderSystem).?;
+        const renderSystem = try engine.getGlobalSystem(RenderSystem);
         renderSystem.frame.sink().connectBound(this, "frame");
         // Load all of the things we need
         // shaders 
@@ -268,7 +230,7 @@ pub const ExampleSystem = struct {
     }
 
     pub fn frame(this: *@This(), args: RenderSystem.OnFrameEventArgs) void {
-        const entities = &args.registries.globalEcsRegistry;
+        const entities = args.engine.getGlobalEcs();
         // TODO: update at fixed step
         this.update(entities);
         var view = entities.view(.{ ExampleComponent}, .{});
@@ -309,8 +271,7 @@ pub const ExampleSystem = struct {
     }
 
     fn update(this: *@This(), entities: *ecs.Registry) void {
-        //const entities = &args.registries.globalEcsRegistry;
-        const deltaSeconds  = 1.0 / 60.0;//= @as(f32, @floatFromInt(args.delta)) / std.time.us_per_s;
+        const deltaSeconds  = 1.0 / 60.0;
         this.lastCameraRotation = this.cameraRotation;
         this.cameraRotation += std.math.pi / 8.0 * deltaSeconds;
         var view = entities.view(.{ ExampleComponent}, .{});
@@ -322,16 +283,6 @@ pub const ExampleSystem = struct {
         }
     }
 
-    // This method probably won't have a lot for most systems, however it is present for doing things like serializing save data or disconnecting from servers.
-    // Put simply, it is a deinit method that still has access to all of the systems.
-    // Local systems are deinited first.
-    pub fn systemDeinitGlobal(this: *@This(), registries: *zengine.RegistrySet) void {
-        _ = registries;
-        _ = this;
-    }
-
-    // At a minimum, this method should clear out any memory that was allocated using the heap allocator given at init.
-    // don't want to free any memory in the systemDeinit method, as other systems could reference it and freeing memory too early could cause access violations.
     pub fn deinit(this: *@This()) void {
         _ = this;
     }
